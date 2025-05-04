@@ -20,52 +20,18 @@ public:
     ThermalCamera();
     ~ThermalCamera();
 
-    /**
-     * Open the TE-EQ1 device.
-     * @param index USB index (default 0 selects first camera)
-     * @return true on success
-     */
     bool open(int index = 0);
 
-    /**
-     * Close the camera and stop any running stream
-     */
     void close();
 
-    /**
-     * Capture a single display-ready image (8-bit BGR).
-     * @return cv::Mat containing the image, or empty if failed
-     */
     cv::Mat captureDisplayImage();
 
-    /**
-     * Start continuous capture in a background thread.
-     * Frames will be pushed to an internal queue.
-     * @param fps Desired frames per second
-     */
     void startStream(int fps = 10);
 
-    /**
-     * Retrieve the next frame from the stream queue.
-     * Blocks until a frame is available or stream stops.
-     * @param frame Output cv::Mat frame
-     * @return true if a frame was returned, false if stream ended
-     */
     bool getNextFrame(cv::Mat &frame);
 
-    /**
-     * Stop the background stream thread.
-     */
     void stopStream();
 
-    /**
-     * Record video to file using OpenCV VideoWriter.
-     * This will pull frames from the internal queue.
-     * @param filename Path to output video (e.g. .avi or .mp4)
-     * @param fps Frames per second
-     * @param duration_seconds Maximum duration to record
-     * @return true on successful recording
-     */
     bool recordVideo(const std::string &filename, int fps, int duration_seconds);
 
     // radiometric configuration
