@@ -18,8 +18,9 @@ echo "→ Configuring CMake (Release)..."
 cmake "${ROOT_DIR}" -DCMAKE_BUILD_TYPE=Release
 
 # 3. Build both the static and shared targets
-echo "→ Building static & shared libraries..."
-cmake --build . --parallel --target ThermalCamera_static ThermalCamera_shared
+# echo "→ Building static & shared libraries..."
+# cmake --build . --parallel --target ThermalCamera_static ThermalCamera_shared
+make
 
 # 4. Report results
 echo "  Build complete."
