@@ -38,7 +38,10 @@ int main(){
           std::cerr << "captureImage() returned empty frame\n";
       } else {
         //   cv::imshow("Single Frame", img);
-          cv::waitKey(0);  // press any key to continue
+        //   cv::waitKey(0);  // press any key to continue
+        std::cout << "Captured single frame of size: " << img.size() << "\n";
+            cv::imwrite("thermal_image.png", img);
+            std::cout << "Saved image to thermal_image.png\n";
       }
     }
     
@@ -62,7 +65,7 @@ int main(){
 
 
     // 6) Adjust emissivity (example: human skin ≈ 0.98)
-    cam.setEmissivity(0.98f);
+    cam.setEmissivity(0.5f);
     std::cout << "Emissivity set to 0.98\n";
 
 
@@ -70,9 +73,9 @@ int main(){
     std::cout << "Starting live stream for 10 seconds...\n";
     cam.startStream(
         [](const cv::Mat &frame) {
-            // cv::imshow("Live Stream", frame);
+            if (frame.empty()) return;
+            cv::imshow("Live Stream", frame);
             cv::waitKey(1);
-            std::cout << "Frame received: " << frame.size() << "\n";
         },
         /*applyAgc=*/true
     );
