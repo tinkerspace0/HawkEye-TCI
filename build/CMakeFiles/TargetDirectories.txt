@@ -1,3 +1,0 @@
-/home/hawkeye/hawkeye/HawkEye-TCI/build/CMakeFiles/thermal_test.dir
-/home/hawkeye/hawkeye/HawkEye-TCI/build/CMakeFiles/edit_cache.dir
-/home/hawkeye/hawkeye/HawkEye-TCI/build/CMakeFiles/rebuild_cache.dir
