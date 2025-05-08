@@ -81,7 +81,9 @@ namespace thermal {
             // 2) Allocate buffer
             auto buf = new unsigned short[w*h];
             
-            // Retry loop for transient data‐read failures:
+            // 3) Capture image
+            // Retry if the first attempt fails
+            // (e.g. if the camera is still warming up)
             do {
                 ret = teA_->RecvImage(buf, applyAgc);
                 if (ret == 1) break;
@@ -96,22 +98,30 @@ namespace thermal {
                 delete[] buf;
                 return {};  // still no image
             }
-            {
-
-                // Success: convert exactly as before…
-                cv::Mat raw16(h, w, CV_16U, buf);
-                if (!applyAgc)      raw16.convertTo(gray8, CV_8U, 0.2, -1500);
-                else                raw16.convertTo(gray8, CV_8U);
-                
-                delete[] buf;
-                
-                // Expand to BGR (or apply a colormap if you prefer):
-                cv::Mat color;
-                cv::cvtColor(gray8, color, cv::COLOR_GRAY2BGR);
-                // cv::applyColorMap(gray8, color, cv::COLORMAP_JET);
-                
-                return color;
+            // 4) Convert to 8-bit grayscale
+            cv::Mat raw16(h, w, CV_16U, buf);
+            
+            cv::Mat gray8;
+            if (applyAgc) {     // (AGC is applied in the camera, so we can use 8-bit directly)
+                raw16.convertTo(gray8, CV_8U, 1.0/256.0);
+            } else {    
+                double mn, mx;
+                cv::minMaxLoc(raw16, &mn, &mx);
+                raw16.convertTo(
+                    gray8,
+                    CV_8U,
+                    255.0/(mx - mn),
+                    -mn * 255.0/(mx - mn)
+                );
             }
+
+            delete[] buf;
+
+            // now colorize and return
+            cv::Mat color;
+            cv::applyColorMap(gray8, color, cv::COLORMAP_JET);
+            return color;
+
         }
         else if (teB_) {
             int w = teB_->GetImageWidth(), h = teB_->GetImageHeight();
