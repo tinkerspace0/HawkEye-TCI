@@ -37,11 +37,11 @@ int main(){
       if (img.empty()) {
           std::cerr << "captureImage() returned empty frame\n";
       } else {
-          cv::imshow("Single Frame", img);
+        //   cv::imshow("Single Frame", img);
           cv::waitKey(0);  // press any key to continue
       }
     }
-
+    
 
     // 4) Print min/max temperature stats
     {
@@ -70,8 +70,9 @@ int main(){
     std::cout << "Starting live stream for 10 seconds...\n";
     cam.startStream(
         [](const cv::Mat &frame) {
-            cv::imshow("Live Stream", frame);
+            // cv::imshow("Live Stream", frame);
             cv::waitKey(1);
+            std::cout << "Frame received: " << frame.size() << "\n";
         },
         /*applyAgc=*/true
     );

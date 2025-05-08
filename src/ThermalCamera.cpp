@@ -1,6 +1,8 @@
 #include "ThermalCamera.h"
 #include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
 #include <unistd.h>
+#include <iostream>
 
 namespace thermal {
 
@@ -47,10 +49,10 @@ namespace thermal {
     bool ThermalCamera::open(int model, unsigned int devNum) {
         close();
         if (model == 1) {
-            teB_ = i3::OpenTE_B(i3::I3_TE_Q1, devNum);
+            teB_ = i3::OpenTE_B(I3_TE_Q1, devNum);
         }
         else if (model == 2) {
-            teB_ = i3::OpenTE_B(i3::I3_TE_V1, devNum);
+            teB_ = i3::OpenTE_B(I3_TE_V1, devNum);
         }
         else if (model == 3) {
             teA_ = i3::OpenTE_A(devNum);
@@ -69,22 +71,47 @@ namespace thermal {
 
     // — Single‐frame capture — 
     cv::Mat ThermalCamera::captureImage(bool applyAgc) {
+        const int MAX_RETRIES = 3;
+        int retry = 0, ret = 0;
+        cv::Mat gray8;
+
         if (teA_) {
+            // 1) Get image size
             int w = teA_->GetImageWidth(), h = teA_->GetImageHeight();
+            // 2) Allocate buffer
             auto buf = new unsigned short[w*h];
-            if (teA_->RecvImage(buf, applyAgc) == 1) {
-                cv::Mat img(h, w, CV_16U, buf);
-                if (!applyAgc) {
-                    cv::Mat tmp;
-                    img.convertTo(tmp, CV_8U, 0.2, -1500);
-                    img = tmp;
-                }
-                cv::Mat out;
-                img.convertTo(out, CV_8UC3);
+            
+            // Retry loop for transient data‐read failures:
+            do {
+                ret = teA_->RecvImage(buf, applyAgc);
+                if (ret == 1) break;
+                std::cerr << "[WARN] RecvImage failed (code=" << ret
+                        << "), retrying " << (retry+1) << "/" << MAX_RETRIES << "\n";
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            } while (++retry < MAX_RETRIES);
+
+            if (ret != 1) {
+                std::cerr << "[ERROR] captureImage: giving up after " 
+                          << MAX_RETRIES << " retries (last code=" << ret << ")\n";
                 delete[] buf;
-                return out;
+                return {};  // still no image
             }
-            delete[] buf;
+            {
+
+                // Success: convert exactly as before…
+                cv::Mat raw16(h, w, CV_16U, buf);
+                if (!applyAgc)      raw16.convertTo(gray8, CV_8U, 0.2, -1500);
+                else                raw16.convertTo(gray8, CV_8U);
+                
+                delete[] buf;
+                
+                // Expand to BGR (or apply a colormap if you prefer):
+                cv::Mat color;
+                cv::cvtColor(gray8, color, cv::COLOR_GRAY2BGR);
+                // cv::applyColorMap(gray8, color, cv::COLORMAP_JET);
+                
+                return color;
+            }
         }
         else if (teB_) {
             int w = teB_->GetImageWidth(), h = teB_->GetImageHeight();
@@ -120,7 +147,6 @@ namespace thermal {
     }
 
     void ThermalCamera::stopStream() {
-        if (!streaming_) return;
         streaming_ = false;
         if (streamThread_.joinable())
             streamThread_.join();
