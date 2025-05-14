@@ -58,6 +58,8 @@ namespace thermal {
         
         private:
             // internal thread func
+            cv::Mat captureImage(bool applyAgc);
+            TempStats getTemperatureStats(bool applyAgc);
             void streamLoop();
         
             // low‐level handles (only one is non‐null at a time)

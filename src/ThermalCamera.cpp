@@ -109,30 +109,19 @@ namespace thermal {
                 );
             }
             delete[] buf;
-            cv::Mat color;
-            cv::applyColorMap(gray8, color, cv::COLORMAP_JET);
-            return color;
+            return grey8;
 
         } else if (teB_) {
             int w = teB_->GetImageWidth(), h = teB_->GetImageHeight();
-            if (applyAgc) {
-                auto buf = new unsigned short[w*h];
-                if (teB_->RecvImage(buf) == 1) {
-                    cv::Mat img(h, w, CV_16U, buf);
-                    delete[] buf;
-                    return img;
-                }
+            auto buf = new unsigned short[w*h];
+            if (teB_->RecvImage(buf) == 1) {
+                cv::Mat raw16(h, w, CV_16U, buf);
+                cv::Mat gray8;
+                raw16.convertTo(gray8, CV_8U, 1.0/256.0);
                 delete[] buf;
-            } else {
-                auto buf = new float[w*h];
-                if (teB_->RecvImage(buf) == 1) {
-                    cv::Mat img32(h, w, CV_32F, buf);
-                    cv::Mat out; img32.convertTo(out, CV_8U, 1./256.);
-                    delete[] buf;
-                    return out;
-                }
-                delete[] buf;
+                return gray8;
             }
+            delete[] buf;
         }
         return {};
     }
