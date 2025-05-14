@@ -99,16 +99,22 @@ cv::Mat ThermalCamera::acquireRaw(bool applyAgc) {
     return {};
 }
 
-void ThermalCamera::startStream(std::function<void(const cv::Mat&)> cb) {
+void ThermalCamera::startStream(std::function<void(const cv::Mat&)> cb, double fps) {
     if (streaming_ || !cb) return;
     frameCallback_ = std::move(cb);
+    streamFps_ = fps > 0 ? fps : streamFps_;
     streaming_ = true;
     streamThread_ = std::thread(&ThermalCamera::streamLoop, this);
 }
 
 void ThermalCamera::stopStream() {
+    // Stop streaming thread
     streaming_ = false;
-    if (streamThread_.joinable()) streamThread_.join();
+    if (streamThread_.joinable())
+        streamThread_.join();
+    // Also stop recording since no more frames will be produced
+    if (recording_)
+        stopRecording();
 }
 
 void ThermalCamera::startRecording(const std::string& filename,
@@ -131,14 +137,21 @@ void ThermalCamera::stopRecording() {
 }
 
 void ThermalCamera::streamLoop() {
+    const auto frameInterval = std::chrono::microseconds(
+        static_cast<long long>(1e6 / streamFps_)
+    );
     while (streaming_) {
+        auto start = std::chrono::steady_clock::now();
         cv::Mat frame = captureGreyscale();
         if (frame.empty()) break;
         if (recording_ && videoWriter_.isOpened()) {
             videoWriter_.write(frame);
         }
         frameCallback_(frame);
-        std::this_thread::sleep_for(std::chrono::microseconds(33000));
+        auto elapsed = std::chrono::steady_clock::now() - start;
+        if (elapsed < frameInterval) {
+            std::this_thread::sleep_for(frameInterval - elapsed);
+        }
     }
 }
 

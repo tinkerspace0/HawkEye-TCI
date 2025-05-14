@@ -56,7 +56,7 @@ public:
     cv::Mat captureRaw();
 
     // Streaming
-    void startStream(std::function<void(const cv::Mat&)> frameCb);
+    void startStream(std::function<void(const cv::Mat&)> frameCb, double fps=0.0);
     void stopStream();
 
     // Temperature stats & queries
@@ -88,6 +88,7 @@ private:
     std::thread streamThread_;
     std::atomic<bool> streaming_{false};
     std::function<void(const cv::Mat&)> frameCallback_;
+    double streamFps_{30.0}; // frames per second
 
     // Recording state
     std::atomic<bool> recording_{false};
