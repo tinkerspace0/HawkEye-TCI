@@ -1,3 +1,4 @@
+// ThermalCamera.h
 #pragma once
 
 #include <opencv2/core.hpp>
@@ -9,73 +10,84 @@
 
 namespace thermal {
 
-    struct DeviceInfo {
-        unsigned int deviceNumber;   // 0–31
-        unsigned int productVersion; // I3_TE_Q1, I3_TE_V1, I3_TE_EQ1, etc.
-        unsigned int serialNumber;   // nCoreID
-    };
+// Enumerates supported camera models
+enum class CameraModel { Q1, V1, Engine };
 
-    struct TempStats {
-        float minTemp;      // in °C
-        float maxTemp;      // in °C
-        cv::Point minLoc;   // pixel coordinates
-        cv::Point maxLoc;
-    };
+// Bundles configuration options for the camera
+struct ThermalConfig {
+    CameraModel model;
+    unsigned int deviceNumber = 0;
+    bool agc = true;
+    float emissivity = 0.98f;
+};
 
+// Low-level device info
+struct DeviceInfo {
+    unsigned int deviceNumber;
+    unsigned int productVersion;
+    unsigned int serialNumber;
+};
 
-    class ThermalCamera {
-        public:
-            // now matches hotplug_callback_func: void(*)(i3::TE_STATE)
-            using HotplugFn = std::function<void(i3::TE_STATE)>;
-        
-            ThermalCamera();
-            ~ThermalCamera();
-        
-            // — Static device‐level operations — 
-            static std::vector<DeviceInfo> scanDevices();  
-            static void setHotplugCallback(HotplugFn cb);
-        
-            // — Connection management — 
-            // model: 1=Q1, 2=V1, 3=Engine (EQ1/EV1/EQ2/EV2)
-            bool open(int model, unsigned int deviceNumber);
-            void close();
-        
-            // — Single‐frame grab — 
-            // AGC behavior is controlled by setAgc()
-            cv::Mat captureImage();
+// Temperature statistics
+struct TempStats {
+    float minTemp;      // °C
+    float maxTemp;      // °C
+    cv::Point minLoc;   // pixel coords
+    cv::Point maxLoc;
+};
 
-            // — Continuous video stream — 
-            void startStream(std::function<void(const cv::Mat&)> frameCb);
-            void stopStream();
-        
-            // — Temperature statistics (min/max) — 
-            TempStats getTemperatureStats(bool applyAgc = true);
-        
-            // — Calibration & settings — 
-            bool doCalibration();            // runs shutter calibration
-            void setEmissivity(float e);     // 0.01–1.0
-            void setAgc(bool enable);        // enable/disable AGC
-        
-        private:
-            // internal thread func
-            cv::Mat captureImage(bool applyAgc);
-            TempStats getTemperatureStats(bool applyAgc);
-            void streamLoop();
-        
-            // low‐level handles (only one is non‐null at a time)
-            i3::TE_A* teA_{nullptr};
-            i3::TE_B* teB_{nullptr};
+class ThermalCamera {
+public:
+    using HotplugFn = std::function<void(i3::TE_STATE)>;
 
-            bool agc_{false}; // AGC enabled/disabled
-            
-            // streaming state
-            std::thread            streamThread_;
-            std::atomic<bool>      streaming_{false};
-            std::function<void(const cv::Mat&)> frameCallback_;
+    // Construct & open; throws on failure
+    explicit ThermalCamera(const ThermalConfig& cfg);
+    ~ThermalCamera();
 
-            // hotplug callback
-            static HotplugFn       hotplugCallback_;
-            static void            hotplugProxy(i3::TE_STATE state);
-        };
+    ThermalCamera(const ThermalCamera&) = delete;
+    ThermalCamera& operator=(const ThermalCamera&) = delete;
 
-    } // namespace thermal
+    bool isOpen() const noexcept;
+
+    // Grabs an 8-bit grayscale frame (uses AGC setting)
+    cv::Mat captureGreyscale();
+
+    // Grabs a 16-bit raw frame (no AGC)
+    cv::Mat captureRaw();
+
+    // Streaming
+    void startStream(std::function<void(const cv::Mat&)> frameCb);
+    void stopStream();
+
+    // Temperature stats & queries
+    TempStats getTemperatureStats();
+    float temperatureAt(int x, int y);
+
+    // Calibration & settings
+    bool doCalibration();                // runs shutter calibration
+    void setEmissivity(float emissivity);
+    void setAgc(bool enable);
+
+    // Static helpers
+    static std::vector<DeviceInfo> scanDevices();
+    static void setHotplugCallback(HotplugFn cb);
+
+private:
+    void doClose() noexcept;
+    cv::Mat acquireRaw(bool applyAgc);
+    void streamLoop();
+
+    i3::TE_A* teA_{nullptr};
+    i3::TE_B* teB_{nullptr};
+    bool agc_{false};
+    float emissivity_{1.0f};
+
+    std::thread streamThread_;
+    std::atomic<bool> streaming_{false};
+    std::function<void(const cv::Mat&)> frameCallback_;
+
+    static HotplugFn hotplugCallback_;
+    static void hotplugProxy(i3::TE_STATE state);
+};
+
+} // namespace thermal
