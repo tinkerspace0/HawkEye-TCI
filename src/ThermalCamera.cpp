@@ -68,27 +68,23 @@ namespace thermal {
         stopStream();
     }
 
-
     // — Single‐frame capture — 
+    cv::Mat ThermalCamera::captureImage() {
+        return captureImage(agc_);
+    }
+
+    // internal helper for captureImage
     cv::Mat ThermalCamera::captureImage(bool applyAgc) {
         const int MAX_RETRIES = 3;
         int retry = 0, ret = 0;
-        cv::Mat gray8;
-
         if (teA_) {
-            // 1) Get image size
             int w = teA_->GetImageWidth(), h = teA_->GetImageHeight();
-            // 2) Allocate buffer
             auto buf = new unsigned short[w*h];
-            
-            // 3) Capture image
-            // Retry if the first attempt fails
-            // (e.g. if the camera is still warming up)
             do {
                 ret = teA_->RecvImage(buf, applyAgc);
                 if (ret == 1) break;
                 std::cerr << "[WARN] RecvImage failed (code=" << ret
-                        << "), retrying " << (retry+1) << "/" << MAX_RETRIES << "\n";
+                          << "), retrying " << (retry+1) << "/" << MAX_RETRIES << "\n";
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             } while (++retry < MAX_RETRIES);
 
@@ -96,15 +92,13 @@ namespace thermal {
                 std::cerr << "[ERROR] captureImage: giving up after " 
                           << MAX_RETRIES << " retries (last code=" << ret << ")\n";
                 delete[] buf;
-                return {};  // still no image
+                return {};
             }
-            // 4) Convert to 8-bit grayscale
             cv::Mat raw16(h, w, CV_16U, buf);
-            
             cv::Mat gray8;
-            if (applyAgc) {     // (AGC is applied in the camera, so we can use 8-bit directly)
+            if (applyAgc) {
                 raw16.convertTo(gray8, CV_8U, 1.0/256.0);
-            } else {    
+            } else {
                 double mn, mx;
                 cv::minMaxLoc(raw16, &mn, &mx);
                 raw16.convertTo(
@@ -114,16 +108,12 @@ namespace thermal {
                     -mn * 255.0/(mx - mn)
                 );
             }
-
             delete[] buf;
-
-            // now colorize and return
             cv::Mat color;
             cv::applyColorMap(gray8, color, cv::COLORMAP_JET);
             return color;
 
-        }
-        else if (teB_) {
+        } else if (teB_) {
             int w = teB_->GetImageWidth(), h = teB_->GetImageHeight();
             if (applyAgc) {
                 auto buf = new unsigned short[w*h];
@@ -148,12 +138,11 @@ namespace thermal {
     }
 
     // — Streaming — 
-    void ThermalCamera::startStream(std::function<void(const cv::Mat&)> cb,
-                                    bool applyAgc) {
+    void ThermalCamera::startStream(std::function<void(const cv::Mat&)> cb) {
         if (streaming_ || !cb) return;
         frameCallback_ = std::move(cb);
         streaming_ = true;
-        streamThread_ = std::thread(&ThermalCamera::streamLoop, this, applyAgc);
+        streamThread_ = std::thread(&ThermalCamera::streamLoop, this);
     }
 
     void ThermalCamera::stopStream() {
@@ -162,9 +151,9 @@ namespace thermal {
             streamThread_.join();
     }
 
-    void ThermalCamera::streamLoop(bool applyAgc) {
+    void ThermalCamera::streamLoop() {
         while (streaming_) {
-            cv::Mat f = captureImage(applyAgc);
+            cv::Mat f = captureImage();
             if (f.empty()) break;
             frameCallback_(f);
             usleep(33000);
@@ -173,6 +162,11 @@ namespace thermal {
     }
 
     // — Temperature statistics — 
+    TempStats ThermalCamera::getTemperatureStats() {
+        return getTemperatureStats(agc_);
+    }
+
+
     TempStats ThermalCamera::getTemperatureStats(bool applyAgc) {
         TempStats s{0,0,{0,0},{0,0}};
         if (teA_) {
@@ -193,8 +187,7 @@ namespace thermal {
                 s.maxLoc  = {maxP % w, maxP / w};
             }
             delete[] imgBuf; delete[] tempBuf;
-        }
-        else if (teB_) {
+        } else if (teB_) {
             int w = teB_->GetImageWidth(), h = teB_->GetImageHeight();
             auto imgBuf  = new unsigned short[w*h];
             auto tempBuf = new float[w*h];
@@ -227,9 +220,7 @@ namespace thermal {
         if (teB_) teB_->SetEmissivity(e);
     }
 
-
-    void ThermalCamera::setAgc(bool enable) {
-        // AGC is applied per-frame via captureImage/streamLoop
+    void ThermalCamera::setAgc(float enable) {
         agc_ = enable;
     }
 

@@ -41,12 +41,11 @@ namespace thermal {
             void close();
         
             // — Single‐frame grab — 
-            // applyAgc=true uses hardware AGC if available
-            cv::Mat captureImage(bool applyAgc = true);
-        
+            // AGC behavior is controlled by setAgc()
+            cv::Mat captureImage();
+
             // — Continuous video stream — 
-            void startStream(std::function<void(const cv::Mat&)> frameCb,
-                             bool applyAgc = true);
+            void startStream(std::function<void(const cv::Mat&)> frameCb);
             void stopStream();
         
             // — Temperature statistics (min/max) — 
@@ -59,14 +58,14 @@ namespace thermal {
         
         private:
             // internal thread func
-            void streamLoop(bool applyAgc);
+            void streamLoop();
         
             // low‐level handles (only one is non‐null at a time)
             i3::TE_A* teA_{nullptr};
             i3::TE_B* teB_{nullptr};
 
             bool agc_{false}; // AGC enabled/disabled
-
+            
             // streaming state
             std::thread            streamThread_;
             std::atomic<bool>      streaming_{false};
