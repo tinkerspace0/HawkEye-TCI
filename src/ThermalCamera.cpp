@@ -2,6 +2,7 @@
 #include "ThermalCamera.h"
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
+#include <algorithm>
 #include <iostream>
 #include <limits>
 #include <thread>
@@ -9,9 +10,8 @@
 
 namespace thermal {
 
-// Static initialization
-template<typename Fn>
-static Fn* s_hotplugCallback = nullptr;
+// Static initialization of hotplug callback
+ThermalCamera::HotplugFn ThermalCamera::hotplugCallback_ = nullptr;
 
 // Proxy for the C‐style callback
 // Must match C‐API exactly: void(*)(i3::TE_STATE)
@@ -21,7 +21,14 @@ void ThermalCamera::hotplugProxy(i3::TE_STATE state) {
 }
 
 ThermalCamera::ThermalCamera(const ThermalConfig& cfg)
-    : agc_{cfg.agc}, emissivity_{cfg.emissivity} {
+    : agc_{cfg.agc},
+      emissivity_{cfg.emissivity},
+      streamFps_{30.0},
+      recording_{false},
+      recordFps_{0.0},
+      recordInterval_{0},
+      lastRecordTime_(std::chrono::steady_clock::now())
+{
     switch (cfg.model) {
         case CameraModel::Q1:
             teB_ = i3::OpenTE_B(I3_TE_Q1, cfg.deviceNumber);
@@ -36,7 +43,6 @@ ThermalCamera::ThermalCamera(const ThermalConfig& cfg)
     if (!teA_ && !teB_) {
         throw std::runtime_error("Failed to open thermal camera");
     }
-    // Apply emissivity
     if (teA_) teA_->SetEmissivity(emissivity_);
     if (teB_) teB_->SetEmissivity(emissivity_);
 }
@@ -82,17 +88,13 @@ cv::Mat ThermalCamera::acquireRaw(bool applyAgc) {
             if (ret == 1) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         } while (++retry < MAX_RETRIES);
-        if (ret != 1) {
-            return {};
-        }
+        if (ret != 1) return {};
         cv::Mat raw16(h, w, CV_16U, buf.data());
         return raw16.clone();
     } else if (teB_) {
         int w = teB_->GetImageWidth(), h = teB_->GetImageHeight();
         std::vector<unsigned short> buf(w * h);
-        if (teB_->RecvImage(buf.data()) != 1) {
-            return {};
-        }
+        if (teB_->RecvImage(buf.data()) != 1) return {};
         cv::Mat raw16(h, w, CV_16U, buf.data());
         return raw16.clone();
     }
@@ -102,32 +104,34 @@ cv::Mat ThermalCamera::acquireRaw(bool applyAgc) {
 void ThermalCamera::startStream(std::function<void(const cv::Mat&)> cb, double fps) {
     if (streaming_ || !cb) return;
     frameCallback_ = std::move(cb);
-    streamFps_ = fps > 0 ? fps : streamFps_;
+    if (fps > 0.0) streamFps_ = fps;
     streaming_ = true;
+    lastRecordTime_ = std::chrono::steady_clock::now();
     streamThread_ = std::thread(&ThermalCamera::streamLoop, this);
 }
 
 void ThermalCamera::stopStream() {
-    // Stop streaming thread
     streaming_ = false;
     if (streamThread_.joinable())
         streamThread_.join();
-    // Also stop recording since no more frames will be produced
-    if (recording_)
-        stopRecording();
+    if (recording_) stopRecording();
 }
 
-void ThermalCamera::startRecording(const std::string& filename,
-                                   int fourcc,
-                                   double fps) {
+void ThermalCamera::startRecording(const std::string& filename, int fourcc, double fps) {
     if (recording_) return;
+    constexpr double DEFAULT_RECORD_FPS = 30.0;
+    double desiredFps = (fps > 0.0 ? fps : DEFAULT_RECORD_FPS);
+    recordFps_ = std::min(desiredFps, streamFps_);
+    recordInterval_ = std::chrono::microseconds(
+        static_cast<long long>(1e6 / recordFps_)
+    );
     int w = teA_ ? teA_->GetImageWidth() : teB_->GetImageWidth();
     int h = teA_ ? teA_->GetImageHeight() : teB_->GetImageHeight();
-    videoWriter_.open(filename, fourcc, fps, cv::Size(w, h), false);
-    if (!videoWriter_.isOpened()) {
-        throw std::runtime_error("Failed to open video file");
+    if (!videoWriter_.open(filename, fourcc, recordFps_, cv::Size(w, h), false)) {
+        throw std::runtime_error("Failed to open video file for recording");
     }
     recording_ = true;
+    lastRecordTime_ = std::chrono::steady_clock::now();
 }
 
 void ThermalCamera::stopRecording() {
@@ -137,7 +141,7 @@ void ThermalCamera::stopRecording() {
 }
 
 void ThermalCamera::streamLoop() {
-    const auto frameInterval = std::chrono::microseconds(
+    auto frameInterval = std::chrono::microseconds(
         static_cast<long long>(1e6 / streamFps_)
     );
     while (streaming_) {
@@ -145,7 +149,11 @@ void ThermalCamera::streamLoop() {
         cv::Mat frame = captureGreyscale();
         if (frame.empty()) break;
         if (recording_ && videoWriter_.isOpened()) {
-            videoWriter_.write(frame);
+            auto now = std::chrono::steady_clock::now();
+            if (now - lastRecordTime_ >= recordInterval_) {
+                videoWriter_.write(frame);
+                lastRecordTime_ = now;
+            }
         }
         frameCallback_(frame);
         auto elapsed = std::chrono::steady_clock::now() - start;
@@ -175,7 +183,6 @@ TempStats ThermalCamera::getTemperatureStats() {
             s.minLoc = {static_cast<int>(minP % w), static_cast<int>(minP / w)};
             s.maxLoc = {static_cast<int>(maxP % w), static_cast<int>(maxP / w)};
         }
-        return s;
     } else if (teB_) {
         int w = teB_->GetImageWidth(), h = teB_->GetImageHeight();
         std::vector<unsigned short> imgBuf(w * h);
@@ -194,7 +201,6 @@ TempStats ThermalCamera::getTemperatureStats() {
             s.minLoc = {static_cast<int>(minP % w), static_cast<int>(minP / w)};
             s.maxLoc = {static_cast<int>(maxP % w), static_cast<int>(maxP / w)};
         }
-        return s;
     }
     return s;
 }
@@ -211,7 +217,6 @@ float ThermalCamera::temperatureAt(int x, int y) {
             teA_->CalcTemp(tempBuf.data());
             return (tempBuf[y * w + x] - 5000) / 100.0f;
         }
-        return 0.0f;
     } else {
         std::vector<unsigned short> imgBuf(w * h);
         std::vector<float> tempBuf(w * h);
@@ -219,8 +224,8 @@ float ThermalCamera::temperatureAt(int x, int y) {
             teB_->CalcEntireTemp(tempBuf.data());
             return tempBuf[y * w + x];
         }
-        return 0.0f;
     }
+    return 0.0f;
 }
 
 bool ThermalCamera::doCalibration() {

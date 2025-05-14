@@ -1,10 +1,13 @@
 // ThermalCamera.h
 #pragma once
 
+#include <string>
 #include <opencv2/core.hpp>
+#include <opencv2/videoio.hpp>
 #include <functional>
 #include <vector>
 #include <thread>
+#include <chrono>
 #include <atomic>
 #include "i3system_TE.h"
 
@@ -23,9 +26,9 @@ struct ThermalConfig {
 
 // Low-level device info
 struct DeviceInfo {
-    unsigned int deviceNumber;
-    unsigned int productVersion;
-    unsigned int serialNumber;
+    unsigned int deviceNumber;   // 0–31
+    unsigned int productVersion; // I3_TE_Q1, I3_TE_V1, I3_TE_EQ1, etc.
+    unsigned int serialNumber;   // nCoreID
 };
 
 // Temperature statistics
@@ -55,9 +58,13 @@ public:
     // Grabs a 16-bit raw frame (no AGC)
     cv::Mat captureRaw();
 
-    // Streaming
-    void startStream(std::function<void(const cv::Mat&)> frameCb, double fps=0.0);
+    // Streaming: callback per frame; fps=0.0 uses last set or default
+    void startStream(std::function<void(const cv::Mat&)> frameCb, double fps = 0.0);
     void stopStream();
+
+    // Recording: writes frames to video at given FPS; fps=0.0 uses default or caps to stream rate
+    void startRecording(const std::string& filename, int fourcc, double fps = 0.0);
+    void stopRecording();
 
     // Temperature stats & queries
     TempStats getTemperatureStats();
@@ -73,30 +80,33 @@ public:
     static void setHotplugCallback(HotplugFn cb);
 
 private:
-    void doClose() noexcept;
+    void    doClose() noexcept;
     cv::Mat acquireRaw(bool applyAgc);
-    void streamLoop();
+    void    streamLoop();
 
     // Low-level handles (only one non-null)
-    i3::TE_A* teA_{nullptr};
-    i3::TE_B* teB_{nullptr};
+    i3::TE_A*   teA_{nullptr};
+    i3::TE_B*   teB_{nullptr};
 
-    bool agc_{false};
-    float emissivity_{1.0f};
+    bool    agc_{false};
+    float   emissivity_{1.0f};
 
     // Streaming state
-    std::thread streamThread_;
-    std::atomic<bool> streaming_{false};
+    std::thread                         streamThread_;
+    std::atomic<bool>                   streaming_{false};
     std::function<void(const cv::Mat&)> frameCallback_;
-    double streamFps_{30.0}; // frames per second
+    double                              streamFps_{30.0};             // frames per second
 
-    // Recording state
-    std::atomic<bool> recording_{false};
-    cv::VideoWriter videoWriter_;
+    // Video recording state
+    std::atomic<bool>                       recording_{false};
+    double                                  recordFps_{0.0};
+    std::chrono::microseconds               recordInterval_;
+    std::chrono::steady_clock::time_point   lastRecordTime_;
+    cv::VideoWriter                         videoWriter_;
 
     // Hotplug callback
-    static HotplugFn hotplugCallback_;
-    static void hotplugProxy(i3::TE_STATE state);
+    static HotplugFn    hotplugCallback_;
+    static void         hotplugProxy(i3::TE_STATE state);
 };
 
 } // namespace thermal
