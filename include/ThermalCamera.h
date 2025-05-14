@@ -77,15 +77,23 @@ private:
     cv::Mat acquireRaw(bool applyAgc);
     void streamLoop();
 
+    // Low-level handles (only one non-null)
     i3::TE_A* teA_{nullptr};
     i3::TE_B* teB_{nullptr};
+
     bool agc_{false};
     float emissivity_{1.0f};
 
+    // Streaming state
     std::thread streamThread_;
     std::atomic<bool> streaming_{false};
     std::function<void(const cv::Mat&)> frameCallback_;
 
+    // Recording state
+    std::atomic<bool> recording_{false};
+    cv::VideoWriter videoWriter_;
+
+    // Hotplug callback
     static HotplugFn hotplugCallback_;
     static void hotplugProxy(i3::TE_STATE state);
 };

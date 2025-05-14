@@ -1,9 +1,11 @@
 // ThermalCamera.cpp
 #include "ThermalCamera.h"
 #include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
 #include <iostream>
-#include <unistd.h>
 #include <limits>
+#include <thread>
+#include <chrono>
 
 namespace thermal {
 
@@ -40,6 +42,7 @@ ThermalCamera::ThermalCamera(const ThermalConfig& cfg)
 }
 
 ThermalCamera::~ThermalCamera() {
+    stopRecording();
     stopStream();
     doClose();
 }
@@ -108,10 +111,32 @@ void ThermalCamera::stopStream() {
     if (streamThread_.joinable()) streamThread_.join();
 }
 
+void ThermalCamera::startRecording(const std::string& filename,
+                                   int fourcc,
+                                   double fps) {
+    if (recording_) return;
+    int w = teA_ ? teA_->GetImageWidth() : teB_->GetImageWidth();
+    int h = teA_ ? teA_->GetImageHeight() : teB_->GetImageHeight();
+    videoWriter_.open(filename, fourcc, fps, cv::Size(w, h), false);
+    if (!videoWriter_.isOpened()) {
+        throw std::runtime_error("Failed to open video file");
+    }
+    recording_ = true;
+}
+
+void ThermalCamera::stopRecording() {
+    if (!recording_) return;
+    videoWriter_.release();
+    recording_ = false;
+}
+
 void ThermalCamera::streamLoop() {
     while (streaming_) {
         cv::Mat frame = captureGreyscale();
         if (frame.empty()) break;
+        if (recording_ && videoWriter_.isOpened()) {
+            videoWriter_.write(frame);
+        }
         frameCallback_(frame);
         std::this_thread::sleep_for(std::chrono::microseconds(33000));
     }
